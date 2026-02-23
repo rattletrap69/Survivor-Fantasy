@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Survivor Fantasy Draft</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        survivor: ['Bebas Neue', 'sans-serif'],
+                        inter: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        cila: '#f97316', // Orange
+                        kalo: '#0ea5e9', // Teal
+                        vatu: '#a855f7'  // Purple
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Fonts & Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; transition: background-color 0.3s, color 0.3s; background-color: #f8fafc; cursor: default; overflow-x: hidden; }
+        .dark body { background-color: #0f172a; background-image: radial-gradient(circle at 10% 20%, rgb(15, 23, 42) 0%, rgb(20, 30, 48) 90%); }
+        .font-survivor { letter-spacing: 0.1em; }
+        .glass-card { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(0, 0, 0, 0.05); }
+        .dark .glass-card { background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255, 255, 255, 0.05); }
+        .fire-text { color: #f59e0b; text-shadow: 0 0 20px rgba(245, 158, 11, 0.6); }
+        
+        /* Premium Torch Animation */
+        @keyframes torch-glow { 0%, 100% { transform: scale(1); opacity: 0.6; filter: blur(12px); } 50% { transform: scale(1.3); opacity: 0.9; filter: blur(18px); } }
+        .torch-aura { animation: torch-glow 2s infinite alternate ease-in-out; }
+        @keyframes flame-flicker { 
+            0%, 100% { transform: scale(1) rotate(-1deg); } 
+            25% { transform: scale(1.1, 0.9) rotate(1deg); }
+            50% { transform: scale(0.9, 1.1) rotate(-0.5deg); }
+            75% { transform: scale(1.05) rotate(0.5deg); }
+        }
+        .flame-anim { animation: flame-flicker 0.15s infinite ease-in-out; transform-origin: bottom center; }
+        
+        /* Cursor Ripple Effect */
+        .click-ripple { position: fixed; border-radius: 50%; background: radial-gradient(circle, rgba(245, 158, 11, 0.9) 0%, rgba(245, 158, 11, 0) 70%); pointer-events: none; width: 60px; height: 60px; transform: translate(-50%, -50%) scale(0); animation: ripple-effect 0.6s ease-out forwards; z-index: 9999; mix-blend-mode: screen; }
+        @keyframes ripple-effect { 0% { transform: translate(-50%, -50%) scale(0); opacity: 0.8; } 100% { transform: translate(-50%, -50%) scale(2.5); opacity: 0; } }
+        
+        @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in { animation: fade-in 0.3s ease-out forwards; }
+        .pb-safe { padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .premium-shadow { box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); }
+    </style>
+</head>
+<body class="antialiased text-slate-900 dark:text-slate-100 selection:bg-amber-500 selection:text-white">
+
+    <div id="app"></div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, setDoc, getDoc, writeBatch, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // ==========================================
+        // 1. DATA POOLS & CONFIGURATION
+        // ==========================================
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'survivor-fantasy-pro-final-github';
+        const firebaseConfigStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
+        let db, auth;
+
+        const SEASON_TITLES = { "50": "The Ultimate 50", "46": "Several Mistakes", "40": "Winners at War", "20": "Heroes vs Villains", "1": "Borneo" };
+
+        const PLAYER_BIOS = {
+            "rizo": { seasons: "S49", gamesPlayed: 1, wins: 0, archetype: "Strategic Mind", bio: "Self-proclaimed 'R-I-Z-G-O-D'. Strategy centered on charm, sharp calculation, and orchestrating massive blindsides before falling just short of the end." },
+            "kamille": { seasons: "S48", gamesPlayed: 1, wins: 0, archetype: "Puzzle Master", bio: "Software engineer and puzzle powerhouse. Known for an analytical, emotionless approach that ruthlessly dismantled rival alliances." },
+            "rick": { seasons: "S38", gamesPlayed: 1, wins: 0, archetype: "Idol Hunter", bio: "News anchor and ultimate showman. Survived Edge of Extinction, became public enemy number one, and engineered legendary idol plays." },
+            "angelina": { seasons: "S37", gamesPlayed: 1, wins: 0, archetype: "Negotiator", bio: "The queen of negotiations. Famously bartered for rice, initiated the jacket saga, and scaled a '100-foot' rock wall for an idol." },
+            "christian": { seasons: "S37", gamesPlayed: 1, wins: 0, archetype: "Social Threat", bio: "Robotics scientist and Mayor of Slamtown. A strategic genius with an unmatched social processor who survived a grueling endurance challenge." },
+            "ozzy": { seasons: "S13, S16, S23, S34", gamesPlayed: 4, wins: 0, archetype: "Physical", bio: "The Dolphin Boy. The single greatest physical force in history, legendary provider, and creator of the infamous 'fucking stick'." },
+            "cirie": { seasons: "S12, S16, S20, S34", gamesPlayed: 4, wins: 0, archetype: "Strategist", bio: "The couch potato turned legend. Creator of the 3-2-1 blindside and universally recognized as the best player to never win." },
+            "coach": { seasons: "S18, S20, S23", gamesPlayed: 3, wins: 0, archetype: "Character", bio: "The Dragonslayer. Martial artist, philosopher, and storyteller who commanded a cult-like alliance in South Pacific." },
+            "dee": { seasons: "S45", gamesPlayed: 1, wins: 1, archetype: "Winner", bio: "Ruthless boss of the Reba Four. Dominated the mid-game with absolute loyalty, sharp instincts, and cutthroat showmance management." },
+            "emily": { seasons: "S45", gamesPlayed: 1, wins: 0, archetype: "Strategic", bio: "Financial analyst who executed the greatest social turnaround in Survivor history, evolving from day-one pariah to beloved strategic threat." },
+            "jenna": { seasons: "S6, S8", gamesPlayed: 2, wins: 1, archetype: "Social Threat", bio: "The Amazon swimsuit model who proved her grit by winning four individual immunities and dominating the endgame to become Sole Survivor." },
+            "joe": { seasons: "S30, S31, S38", gamesPlayed: 3, wins: 0, archetype: "Challenge Beast", bio: "Joey Amazing. The golden boy of challenges and ultimate camp provider, whose physical dominance made him a perpetual massive target." },
+            "savannah": { seasons: "S48/S49", gamesPlayed: 1, wins: 0, archetype: "Underdog", bio: "Fierce social competitor with a supernatural knack for sniffing out blindsides and shifting the target at Tribal Council." },
+            "charlie": { seasons: "S46", gamesPlayed: 1, wins: 0, archetype: "Social Threat", bio: "Taylor Swift superfan with an incredibly sharp, calculated social game. Ruled the middle but fell just one vote short." },
+            "chrissy": { seasons: "S35", gamesPlayed: 1, wins: 0, archetype: "Challenge Beast", bio: "Brilliant actuary and unlikely challenge beast. Dominated the late-game with four immunity wins and highly logical gameplay." },
+            "jonathan": { seasons: "S42", gamesPlayed: 1, wins: 0, archetype: "Physical Titan", bio: "The ultimate modern challenge titan. Literally carried his entire tribe through the ocean and dominated the pre-merge physical game." },
+            "mike": { seasons: "S42", gamesPlayed: 1, wins: 0, archetype: "Social Threat", bio: "Retired firefighter with a booming voice, massive heart, and hidden strategic chops who seamlessly navigated the endgame." },
+            "tiffany": { seasons: "S46", gamesPlayed: 1, wins: 0, archetype: "Wildcard", bio: "Fierce, outspoken, and incredibly sharp idol-holder of the Yanu tribe. Delivered iconic confessionals and raw gameplay." },
+            "aubry": { seasons: "S32, S34, S38", gamesPlayed: 3, wins: 0, archetype: "Strategist", bio: "The neurotic mastermind who controlled the chaos of Kaôh Rōng. Overcame extreme anxiety to become a legendary strategic driver." },
+            "colby": { seasons: "S2, S8, S20", gamesPlayed: 3, wins: 0, archetype: "Hero", bio: "The original Survivor hero. Set the golden standard for immunity dominance by winning five consecutive challenges in the Outback." },
+            "genevieve": { seasons: "S47", gamesPlayed: 1, wins: 0, archetype: "Under the Radar", bio: "Under-the-radar social player who executes deadly, quiet moves. Her subtle positioning keeps her perfectly insulated." },
+            "kyle": { seasons: "S47", gamesPlayed: 1, wins: 0, archetype: "Physical", bio: "Endurance powerhouse and fiercely loyal alliance member. A physical threat whose likability makes him incredibly dangerous." },
+            "q": { seasons: "S46", gamesPlayed: 1, wins: 0, archetype: "Wildcard", bio: "Agent of chaos and driver of the game. Inventor of the Q-skirt, hide-and-seek champion, and mastermind of 'cancel Christmas'." },
+            "stephenie": { seasons: "S10, S11, S20", gamesPlayed: 3, wins: 0, archetype: "Underdog", bio: "The ultimate survivor of Ulong. Unmatched grit and determination, she survived a decimated tribe to become a pop-culture icon." }
+        };
+
+        const DEFAULT_PLAYERS_S50 = [
+            // Cila Tribe (Orange)
+            { id: "christian", name: "Christian", team: "Jess", tribe: "Cila", status: "Active", isMVP: false },
+            { id: "cirie", name: "Cirie", team: "Ken", tribe: "Cila", status: "Active", isMVP: false },
+            { id: "emily", name: "Emily", team: "Britt", tribe: "Cila", status: "Active", isMVP: false },
+            { id: "jenna", name: "Jenna", team: "Ken", tribe: "Cila", status: "Active", isMVP: false },
+            { id: "joe", name: "Joe", team: "Jess", tribe: "Cila", status: "Active", isMVP: true },
+            { id: "ozzy", name: "Ozzy", team: "Britt", tribe: "Cila", status: "Active", isMVP: false },
+            { id: "rick", name: "Rick Devens", team: "Ian", tribe: "Cila", status: "Active", isMVP: true },
+            { id: "savannah", name: "Savannah", team: "Jess", tribe: "Cila", status: "Active", isMVP: false },
+            // Kalo Tribe (Teal)
+            { id: "charlie", name: "Charlie", team: "Ken", tribe: "Kalo", status: "Active", isMVP: false },
+            { id: "chrissy", name: "Chrissy", team: "Ken", tribe: "Kalo", status: "Active", isMVP: false },
+            { id: "coach", name: "Coach", team: "Jess", tribe: "Kalo", status: "Active", isMVP: false },
+            { id: "dee", name: "Dee", team: "Jess", tribe: "Kalo", status: "Active", isMVP: false },
+            { id: "jonathan", name: "Jonathan", team: "Britt", tribe: "Kalo", status: "Active", isMVP: true },
+            { id: "kamille", name: "Kamille", team: "Ian", tribe: "Kalo", status: "Active", isMVP: false },
+            { id: "mike", name: "Mike", team: "Jess", tribe: "Kalo", status: "Active", isMVP: false },
+            { id: "tiffany", name: "Tiffany", team: "Ian", tribe: "Kalo", status: "Active", isMVP: false },
+            // Vatu Tribe (Purple)
+            { id: "angelina", name: "Angelina", team: "Ian", tribe: "Vatu", status: "Active", isMVP: false },
+            { id: "aubry", name: "Aubry", team: "Ken", tribe: "Vatu", status: "Active", isMVP: true },
+            { id: "colby", name: "Colby", team: "Britt", tribe: "Vatu", status: "Active", isMVP: false },
+            { id: "genevieve", name: "Genevieve", team: "Ken", tribe: "Vatu", status: "Active", isMVP: false },
+            { id: "kyle", name: "Kyle", team: "Ian", tribe: "Vatu", status: "Active", isMVP: false },
+            { id: "q", name: "Q", team: "Britt", tribe: "Vatu", status: "Active", isMVP: false },
+            { id: "rizo", name: "Rizo", team: "Ian", tribe: "Vatu", status: "Active", isMVP: false },
+            { id: "stephenie", name: "Stephenie", team: "Britt", tribe: "Vatu", status: "Active", isMVP: false }
+        ];
+
+        const TRIVIA_POOL = [
+            { q: "Who is the only person to be voted out with TWO hidden immunity idols?", options: ["James Clement", "Tai Trang", "Russell Hantz", "Kaleb Gebrewold"], answer: 0, lore: "James famously went home in China with two idols in his pocket." },
+            { q: "What did Jonny Fairplay lie about to win a reward visit?", options: ["Grandmother dying", "Dog dying", "Car stolen", "House burned down"], answer: 0, lore: "Fairplay staged the lie about his grandmother passing away." },
+            { q: "What item did Angelina negotiate with Jeff for in David vs Goliath?", options: ["A Jacket", "Fishing Gear", "Rice", "A Tarp"], answer: 2, lore: "Angelina bartered for rice for the entire tribe." },
+            { q: "Who holds the record for most days played in Survivor history?", options: ["Parvati", "Sandra", "Boston Rob", "Cirie"], answer: 2, lore: "Boston Rob holds the record with 152 total days." },
+            { q: "Which player found an idol at the same tree twice in Samoa?", options: ["Tony Vlachos", "Ben Driebergen", "Russell Hantz", "Rick Devens"], answer: 2, lore: "Russell found back-to-back idols at the same exact tree." }
+        ];
+
+        const TRIVIA_RANKS = [
+            { threshold: 0, title: "Pre-Jury Boot" }, { threshold: 5, title: "Jury Member" }, { threshold: 15, title: "Merge Maker" },
+            { threshold: 30, title: "Challenge Beast" }, { threshold: 50, title: "Idol Hunter" }, { threshold: 100, title: "Survivor Legend" }
+        ];
+
+        // ==========================================
+        // 2. STATE INITIALIZATION & LOCAL STORAGE
+        // ==========================================
+        const state = {
+            theme: localStorage.getItem('survivorTheme') || 'dark', 
+            soundEnabled: localStorage.getItem('survivorSound') !== 'false',
+            musicEnabled: localStorage.getItem('survivorMusic') === 'true',
+            showSplash: true, currentSeason: '50', activeSeasons: ['50', '46', '40'], activeTab: 'dashboard', currentUser: 'Viewer',
+            actions: JSON.parse(localStorage.getItem('survivorActions')) || [], 
+            players: JSON.parse(localStorage.getItem('survivorRoster')) || JSON.parse(JSON.stringify(DEFAULT_PLAYERS_S50)), 
+            teamNames: JSON.parse(localStorage.getItem('survivorTeamNames')) || { Ian: "Ian", Jess: "Jess", Britt: "Britt", Ken: "Ken" }, 
+            pointSystem: JSON.parse(localStorage.getItem('survivorPointSystem')) || [
+                { category: "Camp Life", actions: [{ name: "First Fire", points: 1 }, { name: "Find Idol", points: 4 }, { name: "Find Extra Idol", points: 2 }, { name: "Fake Idol Made", points: 2 }] },
+                { category: "Placement", actions: [{ name: "Sole Survivor", points: 20 }, { name: "Runner Up", points: 10 }, { name: "Win Fire Making", points: 3 }, { name: "MVP Bonus", points: 10 }, { name: "On Jury", points: 2 }] },
+                { category: "Tribal", actions: [{ name: "Idol Play", points: 10 }, { name: "SITD Win", points: 5 }, { name: "Blindsided", points: -5 }, { name: "Home with Idol", points: -5 }] },
+                { category: "Challenges", actions: [{ name: "Indiv Immunity", points: 5 }, { name: "Win Reward", points: 2 }] }
+            ],
+            triviaLeaderboard: JSON.parse(localStorage.getItem('survivorTrivia')) || {}, 
+            trivia: { currentQ: null, askedQuestions: [], status: 'playing', selectedOption: null },
+            musicPlaying: false, selectedPlayerForModal: null, selectedTeam: null, toast: null,
+            selectedEpisode: '1', selectedPlayer: '', selectedCategory: '', selectedActionName: '', 
+            isDemoMode: false, pendingSeason: '50', editingTeamId: null
+        };
+
+        // ==========================================
+        // 3. AUDIO ENGINE
+        // ==========================================
+        let audioCtx;
+        let musicInterval;
+
+        function initAudio() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+
+        function playFireSnap() {
+            if (!state.soundEnabled) return;
+            initAudio();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+        }
+
+        function playTribalDrum(freq, type, gainVal, time) {
+            initAudio();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, time);
+            osc.frequency.exponentialRampToValueAtTime(0.01, time + 0.4);
+            gain.gain.setValueAtTime(gainVal, time);
+            gain.gain.exponentialRampToValueAtTime(0.01, time + 0.4);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(time); osc.stop(time + 0.4);
+        }
+
+        function startMusicLoop() {
+            if (!state.musicEnabled) return;
+            initAudio();
+            let beat = 0;
+            musicInterval = setInterval(() => {
+                const now = audioCtx.currentTime;
+                // Polynesian Rhythm pattern
+                if (beat % 8 === 0) playTribalDrum(60, 'sine', 0.5, now);
+                if (beat % 4 === 2) playTribalDrum(80, 'sine', 0.3, now);
+                if ([0, 3, 6, 10, 13, 15].includes(beat)) playTribalDrum(400, 'triangle', 0.08, now);
+                beat = (beat + 1) % 16;
+            }, 180);
+        }
+
+        function toggleMusic() {
+            initAudio();
+            state.musicEnabled = !state.musicEnabled;
+            localStorage.setItem('survivorMusic', state.musicEnabled);
+            if (state.musicEnabled) startMusicLoop();
+            else clearInterval(musicInterval);
+            updateAppUI();
+        }
+
+        // ==========================================
+        // 4. LOGIC HELPERS
+        // ==========================================
+        function getSuffix(s) { return s === '50' ? '' : `_S${s}`; }
+        function getSeasonTitle(s) { return SEASON_TITLES[s] || "Historic Archive"; }
+        
+        function getTribeColorClasses(tribeName) {
+            if (tribeName === 'Cila') return { border: 'border-cila', text: 'text-cila', bg: 'bg-cila' };
+            if (tribeName === 'Kalo') return { border: 'border-kalo', text: 'text-kalo', bg: 'bg-kalo' };
+            if (tribeName === 'Vatu') return { border: 'border-vatu', text: 'text-vatu', bg: 'bg-vatu' };
+            return { border: 'border-slate-500', text: 'text-slate-500', bg: 'bg-slate-500' };
+        }
+
+        function generateGenericRoster(s) {
+            if (s === '50') return JSON.parse(JSON.stringify(DEFAULT_PLAYERS_S50));
+            const teams = ['Ian', 'Jess', 'Britt', 'Ken'];
+            const roster = [];
+            teams.forEach(t => { for(let i=1; i<=4; i++) roster.push({ id: `s${s}_${t}_${i}`, name: `Warrior ${i}`, team: t, tribe: "Cila", isMVP: false, status: "Active" }); });
+            return roster;
+        }
+
+        function getTriviaRank(score) {
+            for (let i = TRIVIA_RANKS.length - 1; i >= 0; i--) {
+                if (score >= TRIVIA_RANKS[i].threshold) return { level: i + 1, title: TRIVIA_RANKS[i].title, next: TRIVIA_RANKS[i+1]?.threshold || null };
+            }
+            return { level: 1, title: TRIVIA_RANKS[0].title, next: 5 };
+        }
+
+        function pickNextQuestion() {
+            let avail = TRIVIA_POOL.map((_, i) => i).filter(i => !state.trivia.askedQuestions.includes(i));
+            if (!avail.length) { state.trivia.askedQuestions = []; avail = TRIVIA_POOL.map((_, i) => i); }
+            state.trivia.currentQ = avail[Math.floor(Math.random() * avail.length)];
+            state.trivia.askedQuestions.push(state.trivia.currentQ);
+            state.trivia.status = 'playing'; state.trivia.selectedOption = null;
+        }
+
+        function showToast(msg, type = 'success') { state.toast = { msg, type }; updateAppUI(); setTimeout(() => { state.toast = null; updateAppUI(); }, 3000); }
+        function resetForm() { state.selectedPlayer = ''; state.selectedCategory = ''; state.selectedActionName = ''; updateAppUI(); }
+
+        function saveLocalFallback() {
+            localStorage.setItem('survivorActions', JSON.stringify(state.actions));
+            localStorage.setItem('survivorRoster', JSON.stringify(state.players));
+            localStorage.setItem('survivorTeamNames', JSON.stringify(state.teamNames));
+            localStorage.setItem('survivorPointSystem', JSON.stringify(state.pointSystem));
+            localStorage.setItem('survivorTrivia', JSON.stringify(state.triviaLeaderboard));
+        }
+
+        // ==========================================
+        // 5. VIEW COMPONENTS
+        // ==========================================
+        function renderHeader() {
+            return `
+                <header class="flex flex-col md:flex-row justify-between items-center gap-6 border-b pb-8 border-slate-200 dark:border-slate-800">
+                    <div id="open-season-switcher" class="flex items-center gap-6 cursor-pointer group hover:opacity-80 transition-opacity">
+                        <div class="relative scale-125">
+                            <div class="torch-aura absolute inset-0 bg-amber-500/50 rounded-full blur-xl"></div>
+                            <svg class="w-16 h-16 relative z-10 drop-shadow-[0_0_20px_rgba(245,158,11,0.7)]" viewBox="0 0 100 100">
+                                <path class="flame-anim" d="M50 5 Q35 25 50 45 Q65 25 50 5" fill="#f59e0b" />
+                                <path class="flame-anim" style="animation-delay: 0.03s" d="M50 15 Q42 30 50 45 Q58 30 50 15" fill="#ef4444" />
+                                <rect x="42" y="45" width="16" height="45" rx="4" fill="#4b5563" />
+                                <rect x="40" y="48" width="20" height="10" rx="2" fill="#374151" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h1 class="text-4xl font-survivor text-slate-800 dark:text-white uppercase flex items-center gap-3 font-black">S${state.currentSeason} <i class="fa-solid fa-chevron-down text-sm opacity-50 text-amber-500"></i></h1>
+                            <p class="text-[10px] text-slate-500 font-bold uppercase tracking-[0.4em] leading-none">${getSeasonTitle(state.currentSeason)}</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <button id="music-toggle-btn" class="glass-card w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${state.musicEnabled ? 'text-amber-500 shadow-xl' : 'text-slate-400 opacity-60'}"><i class="fa-solid fa-drum"></i></button>
+                        <button id="sound-toggle-btn" class="glass-card w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${state.soundEnabled ? 'text-amber-500' : 'text-slate-400 opacity-60'}"><i class="fa-solid ${state.soundEnabled ? 'fa-volume-high' : 'fa-volume-xmark'}"></i></button>
+                        <div class="glass-card px-5 py-3 rounded-full text-[10px] font-black uppercase text-amber-600 border border-amber-500/20 shadow-lg">
+                            <i class="fa-solid fa-user-shield mr-2 opacity-50"></i>${state.currentUser}
+                        </div>
+                        <button id="theme-toggle-btn" class="text-slate-400 hover:text-amber-500 transition-colors text-xl p-2"><i class="fa-solid ${state.theme === 'dark' ? 'fa-sun' : 'fa-moon'}"></i></button>
+                    </div>
+                </header>
+            `;
+        }
+
+        function renderSplash() {
+            return `
+                <div class="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center p-6 text-white text-center z-[100]">
+                    <div class="relative mb-12">
+                        <div class="absolute inset-0 bg-amber-500/30 blur-[70px] rounded-full torch-aura"></div>
+                        <i class="fa-solid fa-fire text-[120px] text-amber-500 relative z-10 splash-flame-anim"></i>
+                    </div>
+                    <h1 class="text-7xl font-survivor tracking-tighter mb-12 uppercase leading-none font-black">Fantasy <span class="text-amber-500">Survivor</span></h1>
+                    <div class="glass-card p-10 rounded-[45px] w-full max-w-sm border border-white/10 shadow-2xl splash-interactive">
+                        <h2 class="text-[11px] font-black uppercase text-slate-400 mb-8 text-left tracking-[0.3em] border-b border-white/5 pb-2">Select Expedition</h2>
+                        <div class="space-y-4 max-h-[300px] overflow-y-auto pr-2">
+                            ${state.activeSeasons.map(s => `
+                                <button data-switch-season="${s}" class="w-full bg-white/5 p-7 rounded-[30px] border border-white/10 hover:border-amber-500 hover:bg-amber-500/10 text-left transition-all group uppercase">
+                                    <div class="font-survivor text-4xl group-hover:text-amber-500 leading-none font-black">Season ${s}</div>
+                                    <div class="text-[10px] text-slate-500 font-bold uppercase mt-1 tracking-widest">${SEASON_TITLES[s] || 'Historic Archive'}</div>
+                                </button>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderUserSelectModal() {
+            return `
+                <div id="user-select-backdrop" class="fixed inset-0 bg-black/95 flex items-center justify-center z-[110] p-6 splash-interactive">
+                    <div class="bg-white dark:bg-slate-900 rounded-[55px] p-12 max-w-md w-full text-center border border-slate-200 dark:border-slate-800 animate-fade-in shadow-2xl">
+                        <h2 class="text-5xl font-survivor text-amber-500 tracking-widest mb-4 font-black uppercase">Identify</h2>
+                        <p class="text-[11px] font-black text-slate-500 mb-10 uppercase tracking-[0.4em]">Profile Selection Required</p>
+                        <div class="grid grid-cols-2 gap-6">
+                            ${['Ian', 'Jess', 'Britt', 'Ken'].map(u => `
+                                <button data-select-user="${u}" class="glass-card p-8 rounded-[40px] border-2 border-transparent hover:border-amber-500 transition-all flex flex-col items-center gap-6 group">
+                                    <div class="w-20 h-20 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center font-survivor text-5xl text-white shadow-2xl group-hover:scale-110 transition-transform">${u[0]}</div>
+                                    <span class="font-black text-slate-800 dark:text-white uppercase tracking-[0.2em] text-[10px] group-hover:text-amber-500">${u}</span>
+                                </button>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderDashboard(sortedTeams, playerScores) {
+            let html = `<div class="animate-fade-in pb-10">`;
+            
+            // Personal Spotlight
+            if (['Ian', 'Jess', 'Britt', 'Ken'].includes(state.currentUser)) {
+                const myPlayers = state.players.filter(p => p.team === state.currentUser).sort((a,b) => (playerScores[b.id] || 0) - (playerScores[a.id] || 0));
+                html += `
+                    <div class="mb-14 bg-amber-50 dark:bg-amber-900/10 border-2 border-amber-500/30 rounded-[45px] p-10 shadow-2xl relative overflow-hidden premium-shadow">
+                        <div class="absolute top-0 right-0 p-12 opacity-[0.03] rotate-12 scale-150"><i class="fa-solid fa-star text-[150px]"></i></div>
+                        <h2 class="text-3xl font-survivor text-amber-600 dark:text-amber-500 mb-8 flex items-center gap-4 uppercase tracking-widest font-black relative z-10"><i class="fa-solid fa-star animate-fire"></i> THE ${state.currentUser.toUpperCase()} Spotlight</h2>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 relative z-10">
+                            ${myPlayers.map(p => {
+                                const tColor = getTribeColorClasses(p.tribe);
+                                return `
+                                <div data-player-modal="${p.id}" class="glass-card p-6 rounded-[30px] flex justify-between items-center cursor-pointer transition-all ${p.status === 'Eliminated' ? 'opacity-40 grayscale line-through' : 'premium-shadow hover:scale-105'} border-l-8 ${tColor.border}">
+                                    <div class="flex items-center gap-5">
+                                        <div class="w-14 h-14 rounded-full ${tColor.bg} flex items-center justify-center font-black text-white text-base shadow-lg">${(p.name || '  ').substring(0,2).toUpperCase()}</div>
+                                        <div>
+                                            <div class="font-black text-sm text-slate-800 dark:text-slate-100 uppercase tracking-widest">${p.name} ${p.isMVP ? '🔥' : ''}</div>
+                                            <div class="text-[9px] font-black uppercase ${tColor.text} tracking-widest">${p.tribe} Tribe</div>
+                                        </div>
+                                    </div>
+                                    <div class="text-3xl font-black ${playerScores[p.id] >= 0 ? 'text-green-500' : 'text-red-500'} font-survivor">${playerScores[p.id] || 0}</div>
+                                </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Fantasy Teams Global Rankings
+            html += `<h2 class="text-4xl font-survivor text-slate-800 dark:text-white mb-10 tracking-widest font-black px-4">Global Rankings</h2><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10">`;
+            sortedTeams.forEach((t, i) => {
+                html += `
+                    <div data-team-card="${t.team}" class="glass-card p-12 rounded-[50px] border-t-[10px] ${i==0 ? 'border-amber-500 shadow-amber-500/20 shadow-2xl' : 'border-slate-300 shadow-xl'} flex flex-col items-center cursor-pointer hover:scale-[1.03] transition-all group">
+                        <span class="text-[11px] font-black text-slate-400 uppercase tracking-[0.4em] mb-6">Rank #${i+1}</span>
+                        <div class="text-4xl font-survivor text-slate-800 dark:text-white uppercase tracking-tighter group-hover:text-amber-500 transition-colors leading-none font-black">${state.teamNames[t.team] || t.team}</div>
+                        <div class="text-8xl font-black fire-text my-8 drop-shadow-2xl leading-none font-survivor">${t.score}</div>
+                        <div class="bg-amber-500 text-white px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity">View Roster</div>
+                    </div>
+                `;
+            });
+            html += `</div></div>`;
+            return html;
+        }
+
+        function renderTeamDashboard(teamKey, playerScores, teamScores) {
+            const myPlayers = state.players.filter(p => p.team === teamKey).sort((a,b) => (playerScores[b.id]||0) - (playerScores[a.id]||0));
+            const isOwner = state.currentUser === 'Jess' || state.currentUser === teamKey;
+            return `
+                <div class="animate-fade-in pb-20 uppercase">
+                    <button id="back-to-dashboard" class="mb-6 text-slate-400 font-black text-xs uppercase tracking-widest hover:text-amber-500 transition-colors"><i class="fa-solid fa-arrow-left mr-2"></i> Back to Rankings</button>
+                    <div class="glass-card p-10 rounded-[45px] mb-10 flex flex-col md:flex-row justify-between items-center gap-6 border-t-4 border-amber-500 shadow-xl">
+                        <div class="flex items-center gap-5">
+                            ${state.editingTeamId === teamKey ? `
+                                <div class="flex gap-2"><input id="team-name-input" class="bg-white dark:bg-slate-800 p-3 rounded-2xl border border-amber-500 font-survivor text-3xl uppercase outline-none shadow-inner font-black" value="${state.teamNames[teamKey]}"><button id="save-team-name-btn" data-team="${teamKey}" class="bg-green-600 text-white p-4 rounded-2xl shadow-lg"><i class="fa-solid fa-check"></i></button></div>
+                            ` : `
+                                <h2 class="text-5xl font-survivor text-slate-800 dark:text-white uppercase tracking-widest leading-none font-black">${state.teamNames[teamKey] || teamKey}</h2>
+                                ${isOwner ? `<button id="edit-team-name-btn" data-team="${teamKey}" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-pen-nib"></i></button>` : ''}
+                            `}
+                        </div>
+                        <div class="text-center bg-slate-100 dark:bg-slate-800/50 px-10 py-6 rounded-[35px] border border-white/5 font-survivor"><div class="text-6xl font-black fire-text leading-none">${teamScores[teamKey]}</div><div class="text-[10px] font-black text-slate-500 uppercase mt-2 tracking-widest font-sans">Total XP Earned</div></div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        ${myPlayers.map(p => {
+                            const tColor = getTribeColorClasses(p.tribe);
+                            return `
+                            <div data-player-modal="${p.id}" class="glass-card p-7 rounded-[35px] flex justify-between items-center cursor-pointer transition-all ${p.status === 'Eliminated' ? 'opacity-40 grayscale line-through' : 'shadow-md hover:scale-105'} border-l-8 ${tColor.border}">
+                                <div class="flex items-center gap-6">
+                                    <div class="w-16 h-16 rounded-full ${tColor.bg} flex items-center justify-center font-black text-white text-xl shadow-md">${(p.name || '  ').substring(0,2).toUpperCase()}</div>
+                                    <div>
+                                        <div class="font-black text-xl text-slate-800 dark:text-white uppercase tracking-widest">${p.name}</div>
+                                        <div class="text-[10px] font-bold ${tColor.text} uppercase tracking-widest">${p.status} - ${p.tribe} Tribe</div>
+                                    </div>
+                                </div>
+                                <div class="text-4xl font-black text-slate-800 dark:text-white font-survivor">${playerScores[p.id] || 0}</div>
+                            </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderTribes(playerScores) {
+            const tribes = ['Cila', 'Kalo', 'Vatu'];
+            let html = `<div class="animate-fade-in pb-20">
+                <h2 class="text-4xl font-survivor text-slate-800 dark:text-white mb-10 tracking-widest font-black px-4">Actual Survivor Tribes</h2>
+                <div class="space-y-12">`;
+
+            tribes.forEach(tName => {
+                const tColor = getTribeColorClasses(tName);
+                const tribePlayers = state.players.filter(p => p.tribe === tName).sort((a,b) => (playerScores[b.id]||0) - (playerScores[a.id]||0));
+                const tribeScore = tribePlayers.reduce((sum, p) => sum + (playerScores[p.id] || 0), 0);
+
+                html += `
+                    <div class="glass-card p-10 rounded-[45px] shadow-xl border-t-[10px] ${tColor.border}">
+                        <div class="flex justify-between items-center mb-8">
+                            <h3 class="text-5xl font-survivor ${tColor.text} tracking-widest">${tName} Island</h3>
+                            <div class="text-right">
+                                <div class="text-5xl font-black ${tColor.text} leading-none font-survivor">${tribeScore}</div>
+                                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Total Tribe XP</div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            ${tribePlayers.map(p => `
+                                <div data-player-modal="${p.id}" class="bg-white/40 dark:bg-slate-800/40 p-5 rounded-[25px] flex justify-between items-center cursor-pointer hover:bg-white/60 transition-all ${p.status === 'Eliminated' ? 'opacity-40 grayscale line-through' : 'shadow-sm'} border-l-4 ${tColor.border}">
+                                    <div class="flex items-center gap-4">
+                                        <div class="w-12 h-12 rounded-full ${tColor.bg} flex items-center justify-center font-black text-white text-sm shadow-md">${(p.name || '  ').substring(0,2).toUpperCase()}</div>
+                                        <div>
+                                            <div class="font-bold text-sm text-slate-800 dark:text-white uppercase tracking-widest">${p.name} ${p.isMVP ? '🔥' : ''}</div>
+                                            <div class="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Team ${p.team}</div>
+                                        </div>
+                                    </div>
+                                    <div class="text-2xl font-black text-slate-800 dark:text-white font-survivor">${playerScores[p.id] || 0}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            });
+            html += `</div></div>`;
+            return html;
+        }
+
+        function renderLogPoints() {
+            return `
+                <div class="max-w-2xl mx-auto glass-card rounded-[50px] p-12 animate-fade-in border-t-8 border-amber-500 shadow-2xl premium-shadow uppercase">
+                    <h2 class="text-5xl font-survivor text-amber-500 uppercase mb-4 tracking-tighter font-black">LOG ACHIEVEMENT</h2>
+                    <p class="text-[11px] font-black text-slate-500 mb-10 uppercase tracking-widest leading-relaxed opacity-60">Report achievements. Jess verifies logs before they update the leaderboard.</p>
+                    <form id="log-form" class="space-y-8">
+                        <div><label class="text-[10px] font-black uppercase text-slate-400 block mb-3 tracking-widest">Episode No.</label><select id="episode-select" class="w-full bg-slate-100 dark:bg-slate-800 p-5 rounded-[25px] font-black border-2 border-transparent outline-none focus:border-amber-500 shadow-inner font-black">${[...Array(15)].map((_, i) => `<option value="${i+1}">Episode ${i+1}</option>`).join('')}</select></div>
+                        <div><label class="text-[10px] font-black uppercase text-slate-400 block mb-3 tracking-widest">Castaway</label><select id="player-select" class="w-full bg-slate-100 dark:bg-slate-800 p-5 rounded-[25px] font-black border-2 border-transparent outline-none cursor-pointer focus:border-amber-500 shadow-inner uppercase text-xs"><option value="">-- Choose Castaway --</option>${state.players.filter(p=>p.status!=='Eliminated').map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select></div>
+                        <div><label class="text-[10px] font-black uppercase text-slate-400 block mb-3 tracking-widest">Category</label><select id="category-select" class="w-full bg-slate-100 dark:bg-slate-800 p-5 rounded-[25px] font-black border-2 border-transparent outline-none cursor-pointer focus:border-amber-500 shadow-inner uppercase text-xs"><option value="">-- Choose Category --</option>${state.pointSystem.map(c=>`<option value="${c.category}" ${state.selectedCategory==c.category?'selected':''}>${c.category}</option>`).join('')}</select></div>
+                        ${state.selectedCategory ? `<div><label class="text-[10px] font-black uppercase text-slate-400 block mb-3 tracking-widest">Result</label><select id="action-select" class="w-full bg-slate-100 dark:bg-slate-800 p-5 rounded-[25px] font-black border-2 border-transparent outline-none cursor-pointer focus:border-amber-500 shadow-inner uppercase text-xs">${state.pointSystem.find(c=>c.category==state.selectedCategory).actions.map(a=>`<option value="${a.name}">${a.name} (${a.points} pts)</option>`).join('')}</select></div>` : ''}
+                        <button type="submit" class="w-full bg-gradient-to-r from-amber-600 to-orange-500 text-white font-black py-7 rounded-[35px] text-2xl font-survivor tracking-widest shadow-lg hover:scale-[1.02] active:scale-95 transition-all uppercase">SUBMIT TO JESS</button>
+                    </form>
+                </div>
+            `;
+        }
+
+        function renderActivityFeed() {
+            const isJess = state.currentUser === 'Jess';
+            const pending = state.actions.filter(a => a.status === 'pending' && (isJess || a.loggedBy === state.currentUser));
+            const approved = state.actions.filter(a => a.status !== 'pending');
+            return `
+                <div class="max-w-4xl mx-auto space-y-12 animate-fade-in pb-20">
+                    <h2 class="text-5xl font-survivor text-amber-500 mb-8 uppercase tracking-widest font-black"><i class="fa-solid fa-scroll mr-6"></i> The Archives</h2>
+                    ${pending.length ? `
+                        <div class="glass-card p-12 rounded-[55px] border-amber-500 shadow-2xl">
+                            <h3 class="font-survivor text-amber-500 text-3xl mb-10 tracking-widest uppercase">PENDING VERIFICATION</h3>
+                            <div class="space-y-6">
+                                ${pending.map(a => `
+                                    <div class="flex justify-between items-center p-8 bg-white/40 dark:bg-slate-800/40 rounded-[35px] border-l-[10px] border-amber-400 border-dashed shadow-md transition-all hover:bg-white/60">
+                                        <div><div class="font-black text-2xl text-slate-800 dark:text-white uppercase tracking-widest leading-none mb-1">${state.players.find(p=>p.id==a.playerId)?.name || 'Unknown'}</div><div class="text-[11px] text-slate-500 font-bold uppercase tracking-widest">${a.actionName} | By ${a.loggedBy}</div></div>
+                                        <div class="flex gap-4">
+                                            ${isJess ? `<button class="approve-action-btn bg-green-500 text-white w-16 h-16 rounded-[25px] shadow-xl hover:scale-110 transition-transform text-xl" data-id="${a.id}"><i class="fa-solid fa-check"></i></button>` : ''}
+                                            <button data-delete-id="${a.id}" class="bg-red-500 text-white w-16 h-16 rounded-[25px] shadow-xl hover:scale-110 transition-transform text-xl"><i class="fa-solid fa-trash"></i></button>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                    <div class="space-y-6">
+                        <h3 class="font-survivor text-slate-400 text-3xl tracking-widest uppercase px-6">Official Log</h3>
+                        ${approved.length ? approved.map(a => `
+                            <div class="glass-card p-10 rounded-[50px] flex justify-between items-center border-l-[12px] ${a.points >= 0 ? 'border-green-500 shadow-green-500/5' : 'border-red-500 shadow-red-500/5'} shadow-xl hover:bg-white/50 transition-all group uppercase">
+                                <div><div class="font-black text-3xl text-slate-800 dark:text-white uppercase leading-none mb-2">${state.players.find(p=>p.id==a.playerId)?.name}</div><div class="text-[11px] text-slate-500 uppercase tracking-widest font-bold">${a.actionName} | Episode ${a.episode}</div></div>
+                                <div class="flex items-center gap-12 font-survivor">
+                                    <div class="text-6xl font-black ${a.points >= 0 ? 'text-green-500' : 'text-red-500'} drop-shadow-sm leading-none">${a.points >= 0 ? '+' : ''}${a.points}</div>
+                                    ${isJess ? `<button data-delete-id="${a.id}" class="text-slate-300 hover:text-red-500 transition-colors p-4"><i class="fa-solid fa-trash-can text-xl"></i></button>` : ''}
+                                </div>
+                            </div>
+                        `).join('') : `<div class="text-center py-40 opacity-20 uppercase font-black tracking-widest text-xl">Empty Log.</div>`}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderTrivia() {
+            if (!state.trivia.currentQ) pickNextQuestion();
+            const q = TRIVIA_POOL[state.trivia.currentQ];
+            const score = state.triviaLeaderboard[state.currentUser] || 0;
+            const rank = getTriviaRank(score);
+            
+            const leaderboardEntries = Object.entries(state.triviaLeaderboard)
+                .sort((a, b) => b[1] - a[1])
+                .map(([user, s]) => `<div class="flex justify-between items-center bg-slate-100 dark:bg-slate-800 p-4 rounded-2xl mb-3 shadow-inner"><span class="font-black text-sm uppercase tracking-widest">${user}</span><span class="text-amber-500 font-survivor text-2xl">${s} XP</span></div>`)
+                .join('');
+
+            return `
+                <div class="max-w-4xl mx-auto space-y-12 animate-fade-in pb-20">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        <div class="lg:col-span-2 space-y-8">
+                            <div class="glass-card p-10 rounded-[45px] border-l-[12px] border-amber-500 flex justify-between items-center shadow-2xl premium-shadow">
+                                <div class="text-left font-survivor"><div class="text-amber-500 text-5xl mb-2 uppercase tracking-widest leading-none font-black">${rank.title}</div><div class="text-slate-500 font-black uppercase text-[10px] tracking-[0.3em]">Prestige Rank Level ${rank.level}</div></div>
+                                <div class="text-5xl font-black text-slate-800 dark:text-white border-4 border-amber-500/10 px-8 py-5 rounded-[35px] shadow-inner font-survivor">${score} XP</div>
+                            </div>
+                            <div class="glass-card p-12 rounded-[55px] shadow-2xl relative overflow-hidden premium-shadow text-left">
+                                <h3 class="text-3xl font-black mb-12 leading-tight text-slate-800 dark:text-white uppercase tracking-widest">${q.q}</h3>
+                                <div class="grid grid-cols-1 gap-4 uppercase">
+                                    ${q.options.map((opt, i) => `<button ${state.trivia.status=='answered'?'disabled':`data-trivia-ans="${i}"`} class="p-6 rounded-[30px] border-2 font-black transition-all shadow-md ${state.trivia.status=='answered'?(i==q.answer?'bg-green-500/20 border-green-500 text-green-600 shadow-sm shadow-green-500/50':'opacity-20'):'hover:border-amber-500 bg-slate-50 dark:bg-slate-800/50 border-transparent shadow-sm'} text-left text-xs tracking-widest uppercase">${opt}</button>`).join('')}
+                                </div>
+                                <div class="flex gap-4 mt-10">
+                                     <button id="next-trivia-btn" class="flex-1 bg-amber-500 text-white font-black py-6 rounded-[35px] text-2xl font-survivor tracking-widest shadow-xl transition-all hover:bg-amber-400 uppercase">Next Card</button>
+                                     ${state.trivia.status === 'playing' ? `<button id="pass-trivia-btn" class="glass-card px-10 rounded-[35px] font-black uppercase text-[10px] text-slate-400">Skip</button>` : ''}
+                                </div>
+                                ${state.trivia.status=='answered' ? `<div class="mt-8 p-8 bg-slate-50 dark:bg-slate-900 rounded-[30px] text-[11px] font-black border-l-8 border-amber-500 text-slate-500 uppercase tracking-widest leading-relaxed">${q.lore}</div>` : ''}
+                            </div>
+                        </div>
+                        
+                        <div class="glass-card p-10 rounded-[45px] shadow-2xl premium-shadow h-fit border-t-8 border-emerald-500">
+                             <h3 class="font-survivor text-emerald-500 text-3xl mb-8 tracking-widest uppercase">Global Prestige</h3>
+                             ${leaderboardEntries || '<div class="text-slate-400 font-bold text-xs uppercase tracking-widest text-center py-10 opacity-50">No Data Yet</div>'}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderTutorial() {
+            return `
+                <div class="max-w-4xl mx-auto space-y-12 animate-fade-in pb-20">
+                    <div class="glass-card p-14 rounded-[65px] border-l-[15px] border-emerald-500 shadow-2xl premium-shadow relative overflow-hidden">
+                        <div class="absolute top-0 right-0 p-14 opacity-5"><i class="fa-solid fa-map-marked-alt text-[150px]"></i></div>
+                        <h2 class="text-5xl font-survivor text-emerald-500 mb-12 uppercase tracking-widest leading-none font-black">THE OBJECTIVES</h2>
+                        <ul class="space-y-12 text-slate-600 dark:text-slate-300 font-bold text-xl leading-relaxed relative z-10 uppercase">
+                            <li class="flex gap-8 items-start"><div class="w-16 h-16 rounded-[20px] bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-lg font-survivor text-4xl font-black">1</div> <div><span class="text-emerald-500 uppercase font-black tracking-[0.2em] block text-sm mb-2">DRAFT & TRACK</span> Select your warriors and report their victories. Every immunity necklace and idol found builds your tribe's legend.</div></li>
+                            <li class="flex gap-8 items-start"><div class="w-16 h-16 rounded-[20px] bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-lg font-survivor text-4xl font-black">2</div> <div><span class="text-emerald-500 uppercase font-black tracking-[0.2em] block text-sm mb-2">VERIFY DATA</span> Submissions stay 'Pending' until reviewed by Jess. Once approved, scores update instantly.</div></li>
+                            <li class="flex gap-8 items-start"><div class="w-16 h-16 rounded-[20px] bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-lg font-survivor text-4xl font-black">3</div> <div><span class="text-emerald-500 uppercase font-black tracking-[0.2em] block text-sm mb-2">TRIUMPH RANK</span> Prestige XP from Trivia marks your status in the multiverse.</div></li>
+                        </ul>
+                    </div>
+
+                    <div class="glass-card p-14 rounded-[65px] border-l-[15px] border-amber-500 shadow-2xl premium-shadow uppercase">
+                         <h2 class="text-4xl font-survivor text-amber-500 mb-10 uppercase tracking-widest font-black">THE POINT MATRIX</h2>
+                         <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            ${state.pointSystem.map(cat => `
+                                <div class="space-y-4">
+                                    <h3 class="text-2xl font-survivor border-b border-slate-200 dark:border-slate-700 pb-2 text-slate-800 dark:text-white">${cat.category}</h3>
+                                    <div class="space-y-3">
+                                        ${cat.actions.map(act => `
+                                            <div class="flex justify-between items-center text-xs font-bold uppercase text-slate-600 dark:text-slate-400">
+                                                <span>${act.name}</span>
+                                                <span class="text-amber-500 font-black text-sm">${act.points} XP</span>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            `).join('')}
+                         </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderAdmin() {
+            const isJess = state.currentUser === 'Jess';
+            if (!isJess) return '';
+            return `
+                <div class="max-w-4xl mx-auto space-y-12 animate-fade-in pb-20">
+                    <h2 class="text-4xl font-survivor text-amber-500 mb-8 uppercase tracking-widest font-black">COMMISH CONTROL</h2>
+                    
+                    <div class="glass-card p-12 rounded-[55px] shadow-2xl premium-shadow uppercase">
+                        <h3 class="text-2xl font-survivor mb-8 tracking-widest text-slate-800 dark:text-white uppercase">1. THE DRAFT BOARD</h3>
+                        <div class="space-y-4 max-h-[500px] overflow-y-auto pr-4">
+                            ${state.players.map(p => `
+                                <div class="player-row flex flex-col md:flex-row gap-4 items-center bg-slate-50 dark:bg-slate-800/80 p-6 rounded-[35px] border border-white/5 shadow-inner" data-id="${p.id}">
+                                    <input class="player-name bg-white dark:bg-slate-900 p-4 rounded-2xl flex-1 font-bold uppercase text-sm border-2 border-transparent focus:border-amber-500 outline-none" value="${p.name}">
+                                    <div class="flex gap-2">
+                                        <select class="bg-white dark:bg-slate-900 p-4 rounded-2xl text-[10px] font-black uppercase outline-none cursor-pointer tribe-team-select">
+                                            ${['Ian','Jess','Britt','Ken','Unassigned'].map(t=>`<option value="${t}" ${p.team==t?'selected':''}>${t}</option>`).join('')}
+                                        </select>
+                                        <select class="bg-white dark:bg-slate-900 p-4 rounded-2xl text-[10px] font-black uppercase outline-none cursor-pointer tribe-island-select">
+                                            ${['Cila','Kalo','Vatu','Unassigned'].map(t=>`<option value="${t}" ${p.tribe==t?'selected':''}>${t}</option>`).join('')}
+                                        </select>
+                                        <select class="bg-white dark:bg-slate-900 p-4 rounded-2xl text-[10px] font-black uppercase outline-none cursor-pointer tribe-status-select">
+                                            <option value="Active" ${p.status=='Active'?'selected':''}>Active</option>
+                                            <option value="Eliminated" ${p.status=='Eliminated'?'selected':''}>Eliminated</option>
+                                        </select>
+                                    </div>
+                                    <div class="flex items-center gap-3 px-3"><input type="checkbox" class="w-6 h-6 accent-amber-500 cursor-pointer shadow-md" ${p.isMVP?'checked':''}> <span class="text-xs font-black tracking-widest uppercase">MVP</span></div>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <button id="save-roster-btn" class="w-full bg-gradient-to-r from-emerald-600 to-green-500 text-white font-black py-6 rounded-[40px] text-2xl font-survivor tracking-widest shadow-lg mt-10 hover:scale-[1.02] active:scale-95 transition-all uppercase">Publish Roster Updates</button>
+                    </div>
+
+                    <div class="glass-card p-12 rounded-[55px] shadow-2xl premium-shadow border-l-[15px] border-amber-500">
+                         <h3 class="text-2xl font-survivor mb-8 tracking-widest text-slate-800 dark:text-white uppercase">2. POINT SYSTEM EDITOR</h3>
+                         <div class="space-y-8">
+                            ${state.pointSystem.map((cat, catIdx) => `
+                                <div class="p-8 bg-slate-50 dark:bg-slate-800/80 rounded-[40px] shadow-inner">
+                                    <h4 class="font-survivor text-amber-500 text-2xl mb-6 tracking-widest">${cat.category}</h4>
+                                    <div class="space-y-4">
+                                        ${cat.actions.map((act, actIdx) => `
+                                            <div class="flex gap-4 items-center">
+                                                <input class="flex-1 bg-white dark:bg-slate-900 p-4 rounded-2xl text-xs font-bold uppercase outline-none focus:border-amber-500 border-2 border-transparent" data-action="update-rule-name" data-cat="${catIdx}" data-act="${actIdx}" value="${act.name}">
+                                                <input class="w-24 bg-white dark:bg-slate-900 p-4 rounded-2xl text-sm font-black uppercase outline-none focus:border-amber-500 border-2 border-transparent text-center" type="number" data-action="update-rule-points" data-cat="${catIdx}" data-act="${actIdx}" value="${act.points}">
+                                                <button data-action="remove-rule" data-cat="${catIdx}" data-act="${actIdx}" class="text-red-500 hover:text-red-400 transition-colors p-2 text-xl"><i class="fa-solid fa-circle-minus pointer-events-none"></i></button>
+                                            </div>
+                                        `).join('')}
+                                        <button data-action="add-rule" data-cat="${catIdx}" class="text-emerald-500 text-[10px] font-black uppercase tracking-widest mt-6 hover:text-emerald-400 transition-colors"><i class="fa-solid fa-plus mr-2 pointer-events-none"></i> Add Achievement to ${cat.category}</button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                            <button id="save-rules-btn" class="w-full bg-amber-500 text-white font-black py-6 rounded-[40px] text-2xl font-survivor tracking-widest shadow-lg hover:scale-[1.02] transition-all uppercase">Save Rule Matrix</button>
+                         </div>
+                    </div>
+
+                    <div class="glass-card p-12 rounded-[55px] shadow-2xl premium-shadow border-l-[15px] border-emerald-500">
+                         <h3 class="text-2xl font-survivor mb-4 text-emerald-500 uppercase">3. MULTIVERSE PORTAL</h3>
+                         <p class="text-sm text-slate-500 font-bold mb-8 uppercase tracking-widest opacity-80">Start a new historic season. Generates a fresh draft board and blank slate.</p>
+                         <div class="flex gap-4">
+                             <input id="new-season-input" class="bg-white dark:bg-slate-900 p-5 rounded-[30px] flex-1 font-black text-xl uppercase outline-none focus:border-amber-500 border-2 border-transparent shadow-inner" placeholder="Season Number (e.g. 40)">
+                             <button id="start-season-btn" class="bg-emerald-600 text-white font-black py-5 px-12 rounded-[30px] text-xl font-survivor tracking-widest shadow-xl hover:bg-emerald-700 transition-all uppercase">Open Portal</button>
+                         </div>
+                    </div>
+
+                    <div class="glass-card p-12 rounded-[55px] shadow-2xl premium-shadow border-l-[15px] border-red-600">
+                         <h3 class="text-2xl font-survivor mb-4 text-red-600 uppercase">4. SEASON HARD RESET</h3>
+                         <p class="text-sm text-slate-500 font-bold mb-8 uppercase tracking-widest opacity-80">ERASE ALL Verified Records for S${state.currentSeason}. This cannot be undone.</p>
+                         <button id="hard-reset-btn" class="bg-red-600 text-white font-black py-5 px-12 rounded-[30px] text-sm tracking-widest shadow-xl hover:bg-red-700 transition-all active:scale-95 uppercase">ERASE ALL DATA</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderPlayerModal(scores) {
+            const p = state.players.find(x => x.id === state.selectedPlayerForModal);
+            if (!p) return '';
+            const bio = PLAYER_BIOS[p.id] || { bio: "Historical dossier encrypted.", seasons: "Unknown Expedition", gamesPlayed: 1, wins: 0, archetype: "Unknown" };
+            const gamesPlayed = bio.gamesPlayed !== undefined ? bio.gamesPlayed : (bio.seasons ? bio.seasons.split(',').length : 1);
+            const wins = bio.wins || 0;
+            const tColor = getTribeColorClasses(p.tribe);
+            
+            return `
+                <div id="player-modal-backdrop" class="fixed inset-0 bg-black/95 z-[200] flex items-center justify-center p-6 animate-fade-in no-ripple">
+                    <div class="bg-white dark:bg-slate-900 rounded-[55px] max-w-sm w-full p-12 relative shadow-[0_0_80px_rgba(245,158,11,0.3)] border border-white/5 border-t-[10px] ${tColor.border}">
+                        <button id="close-player-modal" class="absolute top-8 right-8 text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-xmark text-3xl"></i></button>
+                        <div class="text-center">
+                            <div class="w-24 h-24 rounded-full ${tColor.bg} mx-auto flex items-center justify-center text-4xl font-black text-white mb-8 border-4 border-white/10 shadow-2xl shadow-amber-500/10">${(p.name || '?').substring(0,2).toUpperCase()}</div>
+                            <h3 class="text-4xl font-survivor text-slate-800 dark:text-white uppercase leading-none font-black">${p.name}</h3>
+                            <div class="text-8xl font-black text-amber-500 mt-6 mb-4 drop-shadow-xl font-survivor">${scores[p.id] || 0}</div>
+                            <div class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-8">Current XP</div>
+                            
+                            <div class="flex justify-center gap-10 mb-8 border-b border-slate-200 dark:border-slate-800 pb-8 mt-4">
+                                <div class="text-center"><div class="text-4xl font-black text-slate-800 dark:text-white font-survivor">${gamesPlayed}</div><div class="text-[9px] uppercase tracking-widest text-slate-500 font-bold mt-1">Games Played</div></div>
+                                <div class="text-center"><div class="text-4xl font-black text-amber-500 font-survivor">${wins}</div><div class="text-[9px] uppercase tracking-widest text-slate-500 font-bold mt-1">Games Won</div></div>
+                            </div>
+                            
+                            <div class="mb-8">
+                                <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Seasons Competed</div>
+                                <div class="text-sm font-black text-slate-800 dark:text-white uppercase tracking-widest">${bio.seasons}</div>
+                            </div>
+                            
+                            <p class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-10 leading-relaxed">${bio.bio}</p>
+                            
+                            <div class="flex flex-col gap-3 items-center">
+                                <div class="text-[10px] font-black ${tColor.text} border-2 ${tColor.border} rounded-full px-6 py-2.5 inline-block uppercase tracking-widest bg-slate-100 dark:bg-slate-800/50">ARCHETYPE: ${bio.archetype || 'Unknown'}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderBottomNav() {
+            const pendingCount = state.actions.filter(a => a.status === 'pending').length;
+            const needsBadge = (state.currentUser === 'Jess' && pendingCount > 0);
+            const tabs = [
+                {id:'dashboard', icon:'fa-house', label:'Home'}, 
+                {id:'tribes', icon:'fa-campground', label:'Tribes'},
+                {id:'log', icon:'fa-fire-flame-curved', label:'Log'}, 
+                {id:'feed', icon:'fa-history', label:'History'}, 
+                {id:'trivia', icon:'fa-puzzle-piece', label:'Trivia'}, 
+                {id:'tutorial', icon:'fa-map', label:'Guide'}
+            ];
+            if(state.currentUser === 'Jess') tabs.push({id:'admin', icon:'fa-shield-halved', label:'Commish'});
+            return `
+                <div class="fixed bottom-0 inset-x-0 glass-card border-t border-slate-200 dark:border-slate-800 z-40 pb-safe pt-3 shadow-[0_-10px_40px_rgba(0,0,0,0.1)]">
+                    <div class="max-w-lg mx-auto flex justify-between h-16 px-4 overflow-x-auto hide-scrollbar gap-2">
+                        ${tabs.map(t => `
+                            <button data-tab="${t.id}" class="relative flex flex-col items-center justify-center min-w-[50px] ${state.activeTab === t.id ? 'text-amber-500 scale-125 translate-y-[-12px]' : 'text-slate-400'} transition-all duration-500 ease-out shrink-0">
+                                ${t.id === 'feed' && needsBadge ? '<span class="absolute top-0 right-1 w-4 h-4 bg-red-600 rounded-full border-4 border-white dark:border-slate-900 animate-pulse shadow-xl"></span>' : ''}
+                                <i class="fa-solid ${t.icon} text-lg mb-1.5 drop-shadow-md"></i>
+                                <span class="text-[8px] font-black uppercase tracking-tighter">${t.label}</span>
+                                ${state.activeTab === t.id ? '<div class="w-1.5 h-1.5 bg-amber-500 rounded-full mt-1.5 animate-fire"></div>' : ''}
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // ==========================================
+        // 7. CORE RENDER ENGINE
+        // ==========================================
+        function updateAppUI() {
+            const root = document.getElementById('app');
+            if (!root) return;
+            if (state.showSplash) { root.innerHTML = renderSplash() + (state.showUserSelectModal ? renderUserSelectModal() : ''); return; }
+            
+            const playerScores = {};
+            state.players.forEach(p => playerScores[p.id] = 0);
+            state.actions.forEach(a => { if (a.status === 'approved' && playerScores[a.playerId] !== undefined) playerScores[a.playerId] += a.points; });
+            const teamScores = { Ian: 0, Jess: 0, Britt: 0, Ken: 0 };
+            state.players.forEach(p => { if(teamScores[p.team] !== undefined) teamScores[p.team] += (playerScores[p.id] || 0); });
+            const sortedTeams = Object.entries(teamScores).map(([team, score]) => ({ team, score })).sort((a, b) => b.score - a.score);
+
+            let contentHTML = renderHeader() + '<main class="mt-12">';
+            if (state.activeTab === 'dashboard' && !state.selectedTeam) contentHTML += renderDashboard(sortedTeams, playerScores);
+            if (state.activeTab === 'dashboard' && state.selectedTeam) contentHTML += renderTeamDashboard(state.selectedTeam, playerScores, teamScores);
+            if (state.activeTab === 'tribes') contentHTML += renderTribes(playerScores);
+            if (state.activeTab === 'log') contentHTML += renderLogPoints();
+            if (state.activeTab === 'feed') contentHTML += renderActivityFeed();
+            if (state.activeTab === 'trivia') contentHTML += renderTrivia();
+            if (state.activeTab === 'tutorial') contentHTML += renderTutorial();
+            if (state.activeTab === 'admin' && state.currentUser === 'Jess') contentHTML += renderAdmin();
+            contentHTML += '</main>';
+            
+            if (state.selectedPlayerForModal) contentHTML += renderPlayerModal(playerScores);
+            if (state.toast) contentHTML += '<div class="fixed top-8 left-1/2 -translate-x-1/2 z-[300] bg-slate-900 text-white px-10 py-5 rounded-full border-2 border-amber-500 font-black uppercase text-xs animate-fade-in shadow-2xl tracking-widest">' + state.toast.msg + '</div>';
+            
+            contentHTML += renderBottomNav();
+            
+            root.innerHTML = '<div class="max-w-7xl mx-auto px-6 py-8 pb-40">' + contentHTML + '</div>';
+        }
+
+        window.render = updateAppUI;
+
+        // ==========================================
+        // 8. FIREBASE / LOCAL STORAGE FLOW
+        // ==========================================
+        function subscribeToSeason(s) {
+            const suf = getSuffix(s);
+            if (state.isDemoMode) {
+                // Keep local loaded state, force re-render
+                updateAppUI();
+                return;
+            }
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'roster' + suf), d => {
+                state.players = d.exists() ? d.data().players : generateGenericRoster(s);
+                updateAppUI();
+            });
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'teamNames' + suf), d => {
+                state.teamNames = d.exists() ? d.data().names : { Ian: "Ian", Jess: "Jess", Britt: "Britt", Ken: "Ken" };
+                updateAppUI();
+            });
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'rules' + suf), d => {
+                if (d.exists()) state.pointSystem = d.data().matrix;
+                updateAppUI();
+            });
+            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'actions' + suf), snap => {
+                state.actions = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => b.timestamp - a.timestamp);
+                updateAppUI();
+            });
+        }
+
+        function initListeners() {
+            if (state.isDemoMode) { updateAppUI(); return; }
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global_meta'), d => {
+                if (d.exists()) state.activeSeasons = d.data().activeSeasons || ['50', '46', '40'];
+                updateAppUI();
+            });
+            onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'trivia_stats'), d => {
+                if (d.exists()) state.triviaLeaderboard = d.data().leaderboard || {};
+                updateAppUI();
+            });
+            subscribeToSeason(state.currentSeason);
+        }
+
+        async function initApp() {
+            if (!firebaseConfigStr) { 
+                state.isDemoMode = true; 
+                initListeners();
+                return; 
+            }
+            try {
+                const config = JSON.parse(firebaseConfigStr);
+                const fbApp = initializeApp(config);
+                auth = getAuth(fbApp); db = getFirestore(fbApp);
+                onAuthStateChanged(auth, async (user) => {
+                    if (!user) {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+                        else await signInAnonymously(auth);
+                    } else {
+                        initListeners();
+                        if (state.musicEnabled) startMusicLoop();
+                    }
+                });
+            } catch (e) { 
+                state.isDemoMode = true; 
+                initListeners();
+            }
+        }
+
+        // ==========================================
+        // 9. EVENT ROUTING
+        // ==========================================
+        function createRipple(e) {
+            const ripple = document.createElement('div');
+            ripple.className = 'click-ripple'; ripple.style.left = `${e.clientX}px`; ripple.style.top = `${e.clientY}px`;
+            document.body.appendChild(ripple); setTimeout(() => ripple.remove(), 600);
+        }
+
+        document.addEventListener('click', (e) => {
+            playFireSnap();
+            if (e.clientX !== undefined) createRipple(e);
+            
+            if (e.target.closest('[data-switch-season]')) { state.pendingSeason = e.target.closest('[data-switch-season]').dataset.switchSeason; state.showUserSelectModal = true; updateAppUI(); }
+            if (e.target.closest('[data-select-user]')) {
+                state.currentUser = e.target.closest('[data-select-user]').dataset.selectUser;
+                state.currentSeason = state.pendingSeason;
+                state.showUserSelectModal = false; state.showSplash = false;
+                subscribeToSeason(state.currentSeason);
+                updateAppUI();
+            }
+            if (e.target.closest('[data-tab]')) { state.activeTab = e.target.closest('[data-tab]').dataset.tab; state.selectedTeam = null; updateAppUI(); }
+            if (e.target.closest('#theme-toggle-btn')) {
+                state.theme = state.theme === 'dark' ? 'light' : 'dark';
+                localStorage.setItem('survivorTheme', state.theme);
+                document.documentElement.classList.toggle('dark'); updateAppUI();
+            }
+            if (e.target.closest('#sound-toggle-btn')) { state.soundEnabled = !state.soundEnabled; localStorage.setItem('survivorSound', state.soundEnabled); updateAppUI(); }
+            if (e.target.closest('#music-toggle-btn')) toggleMusic();
+            if (e.target.closest('[data-team-card]')) { state.selectedTeam = e.target.closest('[data-team-card]').dataset.teamCard; updateAppUI(); }
+            if (e.target.closest('#back-to-dashboard')) { state.selectedTeam = null; updateAppUI(); }
+            if (e.target.closest('[data-player-modal]')) { state.selectedPlayerForModal = e.target.closest('[data-player-modal]').dataset.playerModal; updateAppUI(); }
+            if (e.target.closest('#close-player-modal')) { state.selectedPlayerForModal = null; updateAppUI(); }
+            if (e.target.closest('.approve-action-btn')) {
+                handleApproveAction(e.target.closest('.approve-action-btn').dataset.id);
+                if (state.isDemoMode) saveLocalFallback();
+            }
+            if (e.target.closest('[data-delete-id]')) {
+                const id = e.target.closest('[data-delete-id]').dataset.deleteId;
+                executeDelete(id);
+                if (state.isDemoMode) saveLocalFallback();
+            }
+            if (e.target.id === 'save-roster-btn') {
+                handleSaveRoster();
+                if (state.isDemoMode) saveLocalFallback();
+            }
+            
+            // Point Matrix Events
+            if (e.target.closest('[data-action="add-rule"]')) {
+                const btn = e.target.closest('[data-action="add-rule"]');
+                state.pointSystem[btn.dataset.cat].actions.push({ name: "New Action", points: 1 });
+                updateAppUI();
+            }
+            if (e.target.closest('[data-action="remove-rule"]')) {
+                const btn = e.target.closest('[data-action="remove-rule"]');
+                state.pointSystem[btn.dataset.cat].actions.splice(btn.dataset.act, 1);
+                updateAppUI();
+            }
+
+            if (e.target.id === 'save-rules-btn') {
+                if (!state.isDemoMode) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'rules' + getSuffix(state.currentSeason)), { matrix: state.pointSystem });
+                if (state.isDemoMode) saveLocalFallback();
+                showToast("Point Rule Matrix Updated!");
+            }
+            if (e.target.id === 'start-season-btn') {
+                const newSeason = document.getElementById('new-season-input').value.trim();
+                if (newSeason && !state.activeSeasons.includes(newSeason)) {
+                    state.activeSeasons.push(newSeason);
+                    if (!state.isDemoMode) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global_meta'), { activeSeasons: state.activeSeasons }, { merge: true });
+                    showToast(`Season ${newSeason} Portal Opened!`);
+                    updateAppUI();
+                }
+            }
+            if (e.target.id === 'hard-reset-btn') {
+                if (confirm(`DANGER: Scrub all season achievements for Season ${state.currentSeason}? This cannot be reversed.`)) {
+                    if (!state.isDemoMode) {
+                        state.actions.forEach(a => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'actions' + getSuffix(state.currentSeason), a.id)));
+                    } else {
+                        state.actions = []; updateAppUI(); saveLocalFallback();
+                    }
+                    showToast("Wipe Initiated.");
+                }
+            }
+            if (e.target.id === 'edit-team-name-btn') { state.editingTeamId = e.target.dataset.team; updateAppUI(); }
+            if (e.target.id === 'save-team-name-btn') {
+                const val = document.getElementById('team-name-input').value;
+                state.teamNames[e.target.dataset.team] = val;
+                state.editingTeamId = null;
+                if (!state.isDemoMode) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'teamNames' + getSuffix(state.currentSeason)), { names: state.teamNames }, { merge: true });
+                if (state.isDemoMode) saveLocalFallback();
+                updateAppUI();
+            }
+            if (e.target.closest('[data-trivia-ans]') && state.trivia.status === 'playing') {
+                const idx = parseInt(e.target.closest('[data-trivia-ans]').dataset.triviaAns);
+                state.trivia.selectedOption = idx; state.trivia.status = 'answered';
+                if (idx === TRIVIA_POOL[state.trivia.currentQ].answer) {
+                    state.triviaLeaderboard[state.currentUser] = (state.triviaLeaderboard[state.currentUser] || 0) + 1;
+                    if (!state.isDemoMode) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'trivia_stats'), { leaderboard: state.triviaLeaderboard }, { merge: true });
+                    if (state.isDemoMode) saveLocalFallback();
+                }
+                updateAppUI();
+            }
+            if (e.target.id === 'next-trivia-btn' || e.target.id === 'pass-trivia-btn') { pickNextQuestion(); updateAppUI(); }
+        });
+
+        document.addEventListener('change', (e) => {
+            if (e.target.id === 'player-select') state.selectedPlayer = e.target.value;
+            if (e.target.id === 'category-select') { state.selectedCategory = e.target.value; state.selectedActionName = ''; updateAppUI(); }
+            if (e.target.id === 'action-select') state.selectedActionName = e.target.value;
+            
+            // Point Matrix Handlers
+            if (e.target.dataset.action === 'update-rule-name') {
+                state.pointSystem[e.target.dataset.cat].actions[e.target.dataset.act].name = e.target.value;
+            }
+            if (e.target.dataset.action === 'update-rule-points') {
+                state.pointSystem[e.target.dataset.cat].actions[e.target.dataset.act].points = parseInt(e.target.value) || 0;
+            }
+        });
+
+        document.addEventListener('submit', (e) => { 
+            if (e.target.id === 'log-form') { 
+                e.preventDefault(); 
+                handleAddAction(); 
+                if(state.isDemoMode) saveLocalFallback(); 
+            } 
+        });
+
+        initApp();
+    </script>
+</body>
+</html>
